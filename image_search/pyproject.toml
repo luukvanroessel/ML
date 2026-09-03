@@ -1,0 +1,32 @@
+[project]
+name = "image-search"
+version = "0.1.0"
+description = "Find the most visually similar pictures in a library, using CLIP embeddings"
+requires-python = ">=3.12"
+dependencies = [
+    "torch>=2.4",
+    "torchvision>=0.19",
+    "open-clip-torch>=2.24",
+    "pillow>=10.0",
+    "numpy>=1.26",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/image_search"]
+
+# Torch ships two kinds of wheels. The default one on PyPI bundles CUDA
+# (~2.5 GB of GPU libraries we cannot use on a CPU-only machine). Pointing
+# torch at PyTorch's own "cpu" index gets us a ~200 MB wheel instead.
+# When you get a GPU, delete these two blocks and `uv sync` again.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
