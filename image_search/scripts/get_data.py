@@ -40,10 +40,11 @@ def main() -> None:
 
     from torchvision.datasets import OxfordIIITPet
 
-    print(f"downloading Oxford-IIIT Pet into {args.raw_dir} (~800 MB, once)...")
+    print(f"downloading Oxford-IIIT Pet into {args.raw_dir} (~800 MB)...")
     OxfordIIITPet(root=str(args.raw_dir), split="trainval", download=True)
 
-    images = sorted((args.raw_dir / "oxford-iiit-pet" / "images").glob("*.jpg"))
+    image_dir = args.raw_dir / "oxford-iiit-pet" / "images"
+    images = sorted(image_dir.glob("*.jpg"))
     print(f"{len(images)} images available")
 
     by_breed: dict[str, list[Path]] = defaultdict(list)
@@ -58,7 +59,7 @@ def main() -> None:
             shutil.copy2(image, args.library / image.name)
             copied += 1
 
-    print(f"copied {copied} images from {len(chosen)} breeds -> {args.library}")
+    print(f"copied {copied} images, {len(chosen)} breeds -> {args.library}")
     print("breeds:", ", ".join(chosen))
 
 

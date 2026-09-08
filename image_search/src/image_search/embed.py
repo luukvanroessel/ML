@@ -3,8 +3,10 @@
 This is the only place in the project that knows anything about neural
 networks. Everything downstream just sees an (N, D) array of floats.
 
-Keeping that boundary sharp is the point: at v1 we add a ResNet backend
-next to the CLIP one, and nothing else in the codebase has to change.
+Two backends live here. Read `_TorchBackend` first: it holds everything
+they share. Then read the two subclasses and notice how little differs --
+which weights, which preprocessing, which forward call. That is the
+whole comparison.
 """
 
 from __future__ import annotations
@@ -24,61 +26,33 @@ class Backend(Protocol):
     dim: int  # length of one vector
     device: str  # "cpu" or "cuda"
 
-    def embed_paths(self, paths: list[Path], batch_size: int = 16) -> np.ndarray:
+    def embed_paths(
+        self, paths: list[Path], batch_size: int = 16
+    ) -> np.ndarray:
         """Return an (len(paths), dim) float32 array of unit-length vectors."""
         ...
 
 
-class CLIPBackend:
-    """OpenCLIP ViT-B/32.
+class _TorchBackend:
+    """Shared plumbing for any PyTorch vision model.
 
-    CLIP was trained on ~2 billion (image, caption) pairs with one job:
-    make an image's vector point in the same direction as its caption's
-    vector, and away from every other caption in the batch. Nobody ever
-    told it "cat" or "windmill" as a label. To win that game it had to
-    learn a vector space where *meaning* is direction.
-
-    That is why we can use it without any training of our own: similarity
-    in that space already lines up with "these pictures show the same
-    kind of thing".
-
-    Three stages run inside embed_paths:
-
-    1. Preprocess. `self.preprocess` (built by open_clip to match exactly
-       what the model saw during training) resizes the short side to 224,
-       centre-crops to 224x224, converts to a tensor, and normalises each
-       colour channel by CLIP's training mean/std. Feeding differently
-       scaled pixels than training used quietly wrecks the vectors, which
-       is why we never hand-roll this step.
-
-    2. Encode. A Vision Transformer cuts the 224x224 image into a grid of
-       32x32 patches (7x7 = 49 of them), turns each patch into a token,
-       and runs 12 layers of self-attention so every patch can look at
-       every other patch. Early layers end up responding to edges and
-       colour, later layers to objects and composition. A final linear
-       projection maps the result into the 512-dim space shared with text.
-
-    3. Normalise. We divide each vector by its own length, so all vectors
-       sit on the unit sphere. After that, a dot product *is* the cosine
-       similarity -- which turns the whole search step into one matrix
-       multiply later on. This is a genuine trick, not a formality.
+    Subclasses set `self.model`, `self.preprocess`, `self.name`, `self.dim`
+    and implement `_forward`. Everything else -- batching, no_grad, moving
+    to the device, L2 normalising -- is identical no matter what the model
+    is, so it lives once, here.
     """
 
-    name = "clip-vit-b-32"
+    name: str
+    dim: int
+    device: str
 
-    def __init__(self, device: str | None = None) -> None:
-        import open_clip  # imported late: it pulls in torch, which is slow
+    def _forward(self, batch: torch.Tensor) -> torch.Tensor:
+        """Run a preprocessed (B, 3, H, W) batch through the model."""
+        raise NotImplementedError
 
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.model, _, self.preprocess = open_clip.create_model_and_transforms(
-            "ViT-B-32",
-            pretrained="laion2b_s34b_b79k",
-        )
-        self.model.eval()  # turn off dropout etc. -- we are not training
-        self.model.to(self.device)
-        self.dim = self.model.visual.output_dim
-
-    def embed_paths(self, paths: list[Path], batch_size: int = 16) -> np.ndarray:
+    def embed_paths(
+        self, paths: list[Path], batch_size: int = 16
+    ) -> np.ndarray:
         vectors: list[np.ndarray] = []
         for batch in _batched(paths, batch_size):
             tensors = [self.preprocess(_load(p)) for p in batch]
@@ -88,26 +62,137 @@ class CLIPBackend:
             # the graph PyTorch would need to compute gradients. Faster,
             # and much lighter on memory.
             with torch.no_grad():
-                feats = self.model.encode_image(stacked)
+                feats = self._forward(stacked)
 
-            feats = feats / feats.norm(dim=-1, keepdim=True)  # stage 3
+            # Divide each vector by its own length, putting all of them on
+            # the unit sphere. After this a dot product *is* the cosine
+            # similarity, which turns search into one matrix multiply.
+            feats = feats / feats.norm(dim=-1, keepdim=True)
             vectors.append(feats.cpu().numpy().astype(np.float32))
 
         if not vectors:
             return np.zeros((0, self.dim), dtype=np.float32)
         return np.concatenate(vectors, axis=0)
 
+    def _setup(self, device: str | None) -> None:
+        self.device = device or (
+            "cuda" if torch.cuda.is_available() else "cpu"
+        )
+        self.model.eval()  # turn off dropout etc. -- we are not training
+        self.model.to(self.device)
+
+
+class CLIPBackend(_TorchBackend):
+    """OpenCLIP ViT-B/32. 512-dim vectors.
+
+    Trained on ~2 billion (image, caption) pairs with one job: make an
+    image's vector point the same way as its caption's vector, and away
+    from every other caption in the batch. Nobody ever handed it a label
+    like "cat". To win that game it had to build a space where *meaning*
+    is direction -- because captions describe scenes, moods, styles and
+    relations, not just object categories.
+
+    Preprocessing (built by open_clip to match training exactly): resize
+    short side to 224, centre-crop 224x224, normalise each colour channel
+    by CLIP's training mean/std.
+
+    Architecture: a Vision Transformer cuts the image into a 7x7 grid of
+    32x32 patches, turns each into a token, and runs 12 layers of
+    self-attention so every patch can see every other patch. A final
+    linear projection lands it in the 512-dim space shared with text.
+    """
+
+    def __init__(self, device: str | None = None) -> None:
+        import open_clip  # imported late: pulls in torch, which is slow
+
+        self.name = "clip-vit-b-32"
+        self.model, _, self.preprocess = open_clip.create_model_and_transforms(
+            "ViT-B-32",
+            pretrained="laion2b_s34b_b79k",
+        )
+        self.dim = self.model.visual.output_dim
+        self._setup(device)
+
+    def _forward(self, batch: torch.Tensor) -> torch.Tensor:
+        # CLIP has two towers (image and text). We only want the image one.
+        return self.model.encode_image(batch)
+
+
+class ResNetBackend(_TorchBackend):
+    """torchvision ResNet with its classifier removed. 2048-dim (resnet50).
+
+    The interesting contrast with CLIP is the *training objective*. This
+    network was trained on ImageNet-1k: 1.2 million photos, each tagged
+    with exactly one of 1000 hand-chosen labels, and scored purely on
+    whether it picked the right label. Everything it learned, it learned
+    because it helped answer "which of these 1000 nouns is this?".
+
+    So its features are excellent at object category, and comparatively
+    blind to anything the label set never rewarded -- scene, style, mood,
+    relations between things. Watch for this when you compare: ResNet
+    tends to group by "same kind of object, similar texture", CLIP by
+    "same kind of picture".
+
+    How the classifier comes off: ResNet ends with a global average pool
+    (giving 2048 numbers) followed by `fc`, a single linear layer mapping
+    2048 -> 1000 class scores. Replacing `fc` with `Identity` (a
+    pass-through) means `model(x)` now returns those 2048 numbers instead
+    of class scores. That is the entire "chop off the last layer" trick,
+    and it is one line.
+
+    Note the dimension: 2048 vs CLIP's 512. Bigger is not better here --
+    it costs 4x the storage per image and buys features aimed at a
+    narrower question.
+    """
+
+    def __init__(
+        self, arch: str = "resnet50", device: str | None = None
+    ) -> None:
+        from torchvision import models
+
+        # Each weights enum carries the exact preprocessing used in
+        # training. Using `weights.transforms()` rather than hand-rolling
+        # resize/normalise numbers is how you avoid silently feeding the
+        # model differently-scaled pixels than it was trained on.
+        weights = {
+            "resnet50": models.ResNet50_Weights.IMAGENET1K_V2,
+            "resnet18": models.ResNet18_Weights.IMAGENET1K_V1,
+        }[arch]
+
+        self.name = f"{arch}-imagenet"
+        self.model = getattr(models, arch)(weights=weights)
+        self.preprocess = weights.transforms()
+
+        self.dim = self.model.fc.in_features  # read it BEFORE replacing fc
+        self.model.fc = torch.nn.Identity()
+
+        self._setup(device)
+
+    def _forward(self, batch: torch.Tensor) -> torch.Tensor:
+        return self.model(batch)
+
+
+# Short name -> how to build it. `index --backend <name>` uses these keys,
+# and the key is also the folder the index lands in.
+BACKENDS = {
+    "clip": CLIPBackend,
+    "resnet": ResNetBackend,
+    "resnet18": lambda: ResNetBackend(arch="resnet18"),
+}
+
 
 def get_backend(name: str = "clip") -> Backend:
-    """Look up a backend by short name. v1 adds "resnet" here."""
-    if name == "clip":
-        return CLIPBackend()
-    raise ValueError(f"unknown backend {name!r} (available: clip)")
+    if name not in BACKENDS:
+        available = ", ".join(BACKENDS)
+        raise ValueError(
+            f"unknown backend {name!r} (available: {available})"
+        )
+    return BACKENDS[name]()
 
 
 def _load(path: Path) -> Image.Image:
     # convert("RGB") because a library will contain greyscale photos and
-    # PNGs with alpha channels, and the model expects exactly 3 channels.
+    # PNGs with alpha channels, and the models expect exactly 3 channels.
     return Image.open(path).convert("RGB")
 
 
