@@ -29,7 +29,11 @@ class Backend(Protocol):
     def embed_paths(
         self, paths: list[Path], batch_size: int = 16
     ) -> np.ndarray:
-        """Return an (len(paths), dim) float32 array of unit-length vectors."""
+        """Return a (len(paths), dim) array of unit-length vectors."""
+        ...
+
+    def embed_image(self, image: Image.Image) -> np.ndarray:
+        """Return one (dim,) unit-length vector for a loaded image."""
         ...
 
 
@@ -50,29 +54,48 @@ class _TorchBackend:
         """Run a preprocessed (B, 3, H, W) batch through the model."""
         raise NotImplementedError
 
+    def _encode(self, stacked: torch.Tensor) -> np.ndarray:
+        """Preprocessed batch -> unit-length vectors."""
+        # no_grad: we only run the network forwards, so skip building the
+        # graph PyTorch would need to compute gradients. Faster, and much
+        # lighter on memory.
+        with torch.no_grad():
+            feats = self._forward(stacked)
+
+        # Divide each vector by its own length, putting all of them on
+        # the unit sphere. After this a dot product *is* the cosine
+        # similarity, which turns search into one matrix multiply.
+        feats = feats / feats.norm(dim=-1, keepdim=True)
+        return feats.cpu().numpy().astype(np.float32)
+
     def embed_paths(
         self, paths: list[Path], batch_size: int = 16
     ) -> np.ndarray:
+        """Embed files on disk, a batch at a time.
+
+        Batched and lazy on purpose: a 40k-image library must never be
+        loaded into memory all at once.
+        """
         vectors: list[np.ndarray] = []
         for batch in _batched(paths, batch_size):
             tensors = [self.preprocess(_load(p)) for p in batch]
             stacked = torch.stack(tensors).to(self.device)
-
-            # no_grad: we only run the network forwards, so skip building
-            # the graph PyTorch would need to compute gradients. Faster,
-            # and much lighter on memory.
-            with torch.no_grad():
-                feats = self._forward(stacked)
-
-            # Divide each vector by its own length, putting all of them on
-            # the unit sphere. After this a dot product *is* the cosine
-            # similarity, which turns search into one matrix multiply.
-            feats = feats / feats.norm(dim=-1, keepdim=True)
-            vectors.append(feats.cpu().numpy().astype(np.float32))
+            vectors.append(self._encode(stacked))
 
         if not vectors:
             return np.zeros((0, self.dim), dtype=np.float32)
         return np.concatenate(vectors, axis=0)
+
+    def embed_image(self, image: Image.Image) -> np.ndarray:
+        """Embed one already-loaded image. Returns a (dim,) vector.
+
+        This is the web app's path: an upload arrives as bytes, so there
+        is no file to point `embed_paths` at. `unsqueeze(0)` turns one
+        image into a batch of one, because the model always expects a
+        batch dimension.
+        """
+        stacked = self.preprocess(image).unsqueeze(0).to(self.device)
+        return self._encode(stacked)[0]
 
     def _setup(self, device: str | None) -> None:
         self.device = device or (

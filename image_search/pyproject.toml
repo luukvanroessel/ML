@@ -9,6 +9,9 @@ dependencies = [
     "open-clip-torch>=2.24",
     "pillow>=10.0",
     "numpy>=1.26",
+    "fastapi>=0.141.1",
+    "uvicorn[standard]>=0.53.0",
+    "python-multipart>=0.0.32",
 ]
 
 [build-system]

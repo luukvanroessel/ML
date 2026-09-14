@@ -8,6 +8,8 @@ uv sync
 uv run python scripts/get_data.py                     # 100 cat photos
 uv run python -m image_search.index data/library      # build the index
 uv run python -m image_search.search data/queries/persian_query.jpg -k 5
+
+uv run uvicorn image_search.app:app --reload          # then open :8000
 ```
 
 ```
@@ -46,6 +48,67 @@ unshare -rn uv run python -m image_search.search <query> -k 3
 ```
 
 That runs with no network interfaces at all, and still works.
+
+## The web page
+
+```bash
+uv run uvicorn image_search.app:app --reload
+```
+
+Open <http://127.0.0.1:8000>, drop in a photo, pick a backend, get a grid
+of thumbnails with their similarity scores. `--reload` restarts the
+server whenever you save a file.
+
+`uvicorn` is the thing that actually listens on the port; FastAPI is just
+the code it runs. Three endpoints plus a health check, all in `app.py`.
+
+### Loading the model once is the whole point
+
+| | time |
+|---|---|
+| first search (model still has to load) | **4100 ms** |
+| every search after that | **72 ms** |
+
+Same work, 57x apart. The model lives in a module-level dict that is
+filled on first use and never emptied:
+
+```python
+_loaded: dict[str, tuple[Backend, Index]] = {}
+```
+
+That dict *is* the serving strategy. If the model were loaded inside the
+request handler instead, every single search would pay the 4 seconds.
+Almost everything people mean by "model serving" starts from this one
+idea: keep the expensive thing warm, and make requests cheap.
+
+Inside a warm request: **59 ms to embed** the uploaded photo, **0.1 ms to
+search** 102 vectors. Notice which half is the bottleneck — it is the
+neural network, not the search. Swapping numpy for a vector database
+would optimise the 0.1 ms and leave the 59 ms untouched.
+
+### Things in `app.py` worth reading
+
+- **`/thumb/{name}`** shrinks images to 220 px and caches them in memory:
+  10 KB served instead of a 172 KB original, ~17x less to download.
+- **The path check in `thumb()`.** Any endpoint that turns user input
+  into a file path needs it, or `/thumb/../../etc/passwd` walks straight
+  out of your library folder. Verified: traversal attempts, URL-encoded
+  ones, and absolute paths all return 404.
+- **The uploaded image is never written to disk** — it is embedded from
+  memory and inlined into the results page as a `data:` URI. Fewer moving
+  parts, and nothing to clean up.
+- **`/healthz`** reports which models are warm without touching them.
+  Docker and Kubernetes both expect an endpoint like this.
+- **`/docs`** is generated automatically from the type hints. Free.
+
+### Why FastAPI, why uvicorn
+
+FastAPI reads the type hints on the handler functions and validates
+input for free, generates the `/docs` page from those same hints, and
+runs on uvicorn, which handles concurrent requests without extra work.
+Flask would need a plugin for each of those. No template engine
+(Jinja2, etc.) because two pages of HTML in f-strings is less machinery
+than a template directory — that trade flips around the fourth page.
 
 ## Backends
 
@@ -140,6 +203,7 @@ and Maine Coon** (large, solid, front-facing animal shapes).
 | `src/image_search/store.py` | reading/writing the index. The seam Qdrant replaces next. |
 | `src/image_search/index.py` | walk a folder, embed what changed, save. |
 | `src/image_search/search.py` | embed the query, rank by cosine similarity. |
+| `src/image_search/app.py` | FastAPI web page: upload, thumbnails, health check. |
 | `scripts/get_data.py` | fetch a starter library. |
 | `scripts/evaluate.py` | leave-one-out top-1 and p@k per backend. |
 
@@ -210,8 +274,6 @@ uv run python scripts/evaluate.py
 
 ## Next steps (pick an order)
 
-- **FastAPI + thumbnail page** — actually *see* results instead of reading
-  filenames. Where "which model is better" stops being abstract.
 - **Qdrant** instead of `.npy` — a real vector DB, HNSW, incremental adds.
 - **Docker compose** — app + Qdrant starting together on someone else's
   machine, and the weights problem above.
