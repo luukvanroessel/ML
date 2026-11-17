@@ -27,4 +27,19 @@ Best val acc while developing; test acc only in step 5.
 | 3a | TinyCNN + augmentation, 30 ep | 0.36 | | gap closes (train 0.54); clear gain |
 | 3b | TinyCNN2 (+ batchnorm, dropout) + aug, 30 ep | 0.38 | | within noise of 3a (val = 237 imgs, single run) |
 | 4a | ResNet18 pretrained, head only, 224px, 5 ep | 0.84 | | 6k trainable params; pretraining = the big jump |
-| 4b | 4a + fine-tune layer4, lr 1e-4, 5 ep | 0.90 | | train 1.00; gap grows but val still improves |
+| 4b | 4a + fine-tune layer4, lr 1e-4, 5 ep | 0.90 | 0.873 | train 1.00; gap grows but val still improves |
+
+### Step 5: embedders vs ours on test (1183 cats)
+k-NN / probe: trained on the same 951 images. Retrieval: leave-one-out within test.
+
+| Model | Dim | k-NN | Linear probe | Retrieval top-1 | p@5 |
+|-------|-----|------|--------------|-----------------|-----|
+| CLIP ViT-B/32 | 512 | 0.804 | 0.873 | 0.804 | 0.760 |
+| ResNet50 (ImageNet) | 2048 | 0.820 | 0.861 | 0.821 | 0.767 |
+| ResNet18 (ImageNet) | 512 | 0.791 | 0.850 | 0.806 | 0.744 |
+| **Ours (4b)** | 512 | **0.869** | 0.872 | **0.880** | **0.860** |
+
+Takeaways:
+- Fine-tuning mostly *reshaped* the embedding space (same breed → close together): big gains on k-NN and retrieval, while the linear probe ties with CLIP. The breed information was already in CLIP's features, but less neatly clustered.
+- Weakest breeds: Ragdoll (0.75, confused with Birman) and Maine Coon (0.80, confused with Ragdoll), i.e. long-haired breeds that look alike.
+- Lesson learned: after a kernel restart, the saved model was the 4a one. "Frozen" layers still update their BatchNorm statistics in `train()` mode; that alone cost ~2 points of retrieval.

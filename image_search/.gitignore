@@ -6,3 +6,6 @@ __pycache__/
 # At v3 these get versioned properly with DVC.
 data/
 index/
+
+# Trained weights: large, rebuildable from the notebook.
+models/
