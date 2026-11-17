@@ -43,3 +43,21 @@ Takeaways:
 - Fine-tuning mostly *reshaped* the embedding space (same breed → close together): big gains on k-NN and retrieval, while the linear probe ties with CLIP. The breed information was already in CLIP's features, but less neatly clustered.
 - Weakest breeds: Ragdoll (0.75, confused with Birman) and Maine Coon (0.80, confused with Ragdoll), i.e. long-haired breeds that look alike.
 - Lesson learned: after a kernel restart, the saved model was the 4a one. "Frozen" layers still update their BatchNorm statistics in `train()` mode; that alone cost ~2 points of retrieval.
+
+## Next: windmills
+The real task is **instance retrieval** ("is this *the same* windmill?"), not classification: every photo is a windmill, the details decide.
+
+Sample to ask for:
+- ~300–500 photos of ~50–100 windmills, ≥2–3 photos each (different angles, seasons, years), plus some single-photo windmills as distractors
+- a windmill ID per photo, e.g. in the filename (`de_adriaan_03.jpg`): free ground truth, like the breed here
+- original files: EXIF/GPS present? duplicates or crops?
+- permission to use; leave out photos with recognisable people
+
+Metric: **recall@k** (is a photo of the same windmill in the top k?), not p@k: with only 2–3 photos per windmill, p@5 can never reach 1.
+
+Options, cheap to expensive:
+1. Baseline: CLIP and ResNet on the sample
+2. Stronger off-the-shelf embedder (e.g. DINOv2); check the security review for new model weights first
+3. Re-ranking: embeddings pick a top 20, local feature matching verifies the same object
+4. Fine-tune with metric learning (contrastive/triplet loss) on the windmill IDs
+5. GPS metadata to narrow down candidates
