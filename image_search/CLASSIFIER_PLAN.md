@@ -19,5 +19,12 @@ with the embedders already in use (CLIP, ResNet).
 | 5 | Compare: k-NN / linear probe on CLIP and ResNet embeddings, same test split; plug our model's embeddings into `evaluate.py` | fair comparison of a classifier vs an embedder | CLIP hard to beat |
 
 ## Log
-| Step | Model | Test acc | Notes |
-|------|-------|----------|-------|
+Best val acc while developing; test acc only in step 5.
+
+| Step | Model | Val acc | Test acc | Notes |
+|------|-------|---------|----------|-------|
+| 2 | TinyCNN, 64px, 15 ep | 0.30 | | heavy overfit: train 0.88, val loss rising after ~6 ep |
+| 3a | TinyCNN + augmentation, 30 ep | 0.36 | | gap closes (train 0.54); clear gain |
+| 3b | TinyCNN2 (+ batchnorm, dropout) + aug, 30 ep | 0.38 | | within noise of 3a (val = 237 imgs, single run) |
+| 4a | ResNet18 pretrained, head only, 224px, 5 ep | 0.84 | | 6k trainable params; pretraining = the big jump |
+| 4b | 4a + fine-tune layer4, lr 1e-4, 5 ep | 0.90 | | train 1.00; gap grows but val still improves |
