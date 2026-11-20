@@ -62,8 +62,17 @@ Next-hour **log return** of ICHR, as a percentage. Variant to try later: the **e
   unofficial (it scrapes Yahoo's endpoints), it can break or rate-limit, and **hourly data only goes back ~730 days**.
 - In practice the limit is ~730 *trading* days, so ≈ **5,000 hourly samples per ticker**. That's *small* for an LSTM, so we'll
   need to watch overfitting closely.
-- **Mitigation:** start a scheduled fetch early so we build up our own hourly history beyond the 730-day window. (This is
-  also a good first MLOps job.)
+- **Building up history:** every ingest run fetches the full ~730-trading-day window and merges it, so we only lose
+  data if we don't run it for ~2.9 years. **No scheduler or server needed for now.** If wanted: a systemd user timer with
+  `Persistent=true` (catches up after the laptop was off). A server only becomes necessary for live predictions (step 9).
+- **More granular data (not needed now; prices from memory, so check them):**
+  - Yahoo (free): 5–30-min bars for the last ~60 days, 1-min bars for the last ~7–30 days. Only useful if collected
+    continuously going forward, which *would* need a scheduler.
+  - Alpaca (free tier): years of 1-min history, but only from one exchange (IEX), a small part of all trading. Full data is paid.
+  - Polygon.io and similar: roughly $30–80/month for years of minute bars; tick data costs more.
+  - Databento: pay per amount of data downloaded. Good for a one-off historical download.
+  - Trade-off: 60× more rows and lead-lag effects are more likely at minute scale, but more bid-ask-bounce noise.
+  - A paid provider is a new vendor, so it goes through Samotics' security review first.
 - Storage: **Parquet** files, one per ticker. Parquet keeps types and timezones and is small. No database yet, because
   there's no concurrent access to manage.
 - Store everything in **UTC**. Use adjusted prices (splits/dividends).
@@ -124,8 +133,14 @@ Next-hour **log return** of ICHR, as a percentage. Variant to try later: the **e
       - Facts check: ICHR market cap ≈ $1.3B, 8 analysts (LRCX/AMAT ≈ $270–280B, 30–36). Lam + Applied ≈ 73–79% of
         Ichor's sales (10-Ks FY2016–22: 79% in FY2022; ~73–76% for FY2024–25 per third-party summaries).
       - **Decision: go, with tempered expectations.**
-- [ ] **3. Baselines**: zero / persistence / ridge on lagged returns (+ a big-move feature). Walk-forward eval harness
-      that later models reuse; report metrics **per year**. v1 target excludes the overnight (09:30) bar.
+- [x] **3. Baselines**: `features.py` (shared 3D windows: samples × 7 hours × features), `evaluate.py` (walk-forward
+      by quarter from 2025, expanding train window, 1-bar embargo; metrics MAE/RMSE/skill vs zero/corr/direction),
+      `baselines.py`, `notebooks/03_baselines.ipynb`. Results (test 2025-01 → 2026-11, 2,820 hours):
+      - **Nothing beats zero overall**: ridge −0.09% skill, ridge+big −0.12%, direction ≈ 49.5%.
+      - Persistence −370% skill: large predictions with no signal are very costly.
+      - Ridge shrinks to ~0 itself (alpha 5.6k–31.6k, last fold 1M): prediction std 0.07% vs actual 1.3%.
+      - Regime flip again: 2025 skill +0.4% (corr 0.07), 2026 −0.5%. Big-move features don't help.
+      - **Bar for the LSTM: skill > 0 on the walk-forward, in both years.**
 - [ ] **4. LSTM v1**: `nn.LSTM` on windows of ~20–40 hours of all tickers → next-hour return. Explicit training loop,
       early stopping.
 - [ ] **5. LSTM internals**: write an LSTM cell from scratch, check it matches `nn.LSTM` numerically, and look at gate
