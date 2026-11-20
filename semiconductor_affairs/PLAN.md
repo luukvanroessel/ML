@@ -149,14 +149,30 @@ Next-hour **log return** of ICHR, as a percentage. Variant to try later: the **e
         and the 140 h model only uses the last ~3–7 h (wiping older hours doesn't change predictions).
       - Seed spread (−0.24…−0.51%) ≫ window differences (~0.02%), so always use several seeds.
       - Overfitting visible: train loss falls, validation ≈ 0.99 × zero.
-- [ ] **5. LSTM internals**: write an LSTM cell from scratch, check it matches `nn.LSTM` numerically, and look at gate
+- [x] **Overnight gap** (pulled forward from step 7): `overnight.py` (daily features incl. earnings-tonight flags from
+      Yahoo's calendar, `night_days`), earnings dates added to `ingest.py`, `backtest()` in `evaluate.py`,
+      `notebooks/05_overnight_gap.ipynb`. Test 2025-01 → 2026-11, 472 nights. Results:
+      - First models to beat zero, on **normal nights**: reversal +1.5%, LSTM +1.1%, ridge +0.6%. Earnings nights
+        (±18%, ~40% of squared movement) wreck error metrics, so the flag is used as a skip-trading filter.
+      - "Always long" (overnight drift) = +108% gross, +62% at 5 bp/side: the real bar.
+      - LSTM (10-day daily sequence, hidden 8, **20-seed average**): +186% gross, +140% at 5 bp, beats 99.3% of random
+        strategies. But mostly 2026 (2025 < always long), single seeds −26…+157% (median 74%), best of 6 models,
+        idealised fills. **Promising, not proven** → confirm with live paper trading.
+      - **Long or flat** (`backtest(..., long_only=True)`: buy at the close if the prediction > 0, else stay in cash;
+        never short): LSTM +147% gross, +118% at 5 bp/side, same Sharpe as long/short, 290 vs 464 trades. The short
+        nights only paid off in the last ~6 weeks of the test. Preferred variant for any real use: shorting means
+        borrow fees, possible recall of the shares, and unlimited loss on a takeover-style jump. Holding a permanent
+        base position (e.g. 10 units, sell 1 on "down" nights) avoids shorting but adds full buy-and-hold ICHR risk,
+        including earnings nights, so rejected.
+- [ ] **5. LSTM internals** (deprioritised: not interested in a hand-written cell for now): write an LSTM cell from scratch, check it matches `nn.LSTM` numerically, and look at gate
       activations on real data. Try a forget-gate bias init of ≥1 (longer starting memory).
 - [ ] **6. Evaluate**: LSTM vs baselines on metrics from §5.7, including the toy backtest with costs.
-- [ ] **7. Iterate**: separate overnight-gap model (small data, so a simple model first), excess-return target, time-of-day / overnight features, Taiwan-close TSMC (`2330.TW`) as an
+- [ ] **7. Iterate**: excess-return target, time-of-day / overnight features, Taiwan-close TSMC (`2330.TW`) as an
       overnight feature, European variant, daily-frequency comparison.
 - [ ] **8. MLOps**: scheduled data refresh, model versioning, retraining.
 - [ ] **9. Deploy**: FastAPI + a simple page showing the latest prediction and a **live track record** (predicted vs
-      realised). That's the honest way to show a model like this.
+      realised). That's the honest way to show a model like this. Track three paper strategies side by side:
+      LSTM long/short, LSTM **long or flat**, and always long. Decide on real money only after months of live results.
 
 ## 8. Decision log
 
@@ -167,6 +183,7 @@ Next-hour **log return** of ICHR, as a percentage. Variant to try later: the **e
 | 2026-11-19 | Signal check + baselines before any LSTM | Otherwise LSTM results can't be interpreted |
 | 2026-11-19 | Ingest as a module, inspection in notebooks | Ingest gets scheduled and reused by the service; exploration doesn't |
 | 2026-11-19 | Go after step 2, overnight bar out of v1 target | Weak/unstable linear signal, but nonlinear big-move hints; overnight bar is a different process |
+| 2026-11-20 | Prefer long or flat over long/short for any real use | Keeps most of the backtest gain without borrow fees or unlimited loss; a permanent base position would add buy-and-hold risk instead |
 
 ## 9. Open questions
 

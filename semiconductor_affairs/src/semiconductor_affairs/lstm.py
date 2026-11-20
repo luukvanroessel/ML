@@ -74,7 +74,11 @@ class LSTMRegressor:
         X_val, y_val = X[-n_val:], y[-n_val:]
 
         self.x_mean = X_tr.mean(axis=(0, 1))
-        self.x_std = X_tr.std(axis=(0, 1))
+        # a feature that never changes in training (e.g. a flag that
+        # never fired) gets std 1 instead of a division by zero
+        self.x_std = np.where(
+            (s := X_tr.std(axis=(0, 1))) > 0, s, 1.0
+        )
         self.y_std = y_tr.std()
 
         xt, xv = self._scale_x(X_tr), self._scale_x(X_val)

@@ -97,3 +97,40 @@ def report(data: Dataset, preds: pd.Series, by: str = "fold") -> pd.DataFrame:
     }
     rows["all"] = metrics(data.y[preds.index], preds.to_numpy())
     return pd.DataFrame(rows).T
+
+
+def backtest(
+    y: np.ndarray,
+    pred: np.ndarray,
+    cost_bps: float = 0.0,
+    skip: np.ndarray | None = None,
+    long_only: bool = False,
+) -> pd.DataFrame:
+    """Per-period position and profit of trading the predicted direction.
+
+    Long 1 unit if pred > 0, short if pred < 0. `cost_bps` is paid on
+    entry and on exit (so twice per trade), in basis points (0.01%).
+    `skip` marks periods where we don't trade (e.g. earnings nights).
+    `long_only`: "long or flat", stay in cash instead of going short.
+    """
+    position = np.sign(pred)
+    if long_only:
+        position = np.maximum(position, 0.0)
+    if skip is not None:
+        position = np.where(skip, 0.0, position)
+    cost = np.abs(position) * 2 * cost_bps / 1e4
+    return pd.DataFrame({"position": position, "pnl": position * y - cost})
+
+
+def backtest_summary(bt: pd.DataFrame, periods_per_year: int = 252) -> dict:
+    traded = bt.loc[bt["position"] != 0, "pnl"]
+    pnl = bt["pnl"]
+    return {
+        "trades": len(traded),
+        "long %": (bt["position"] > 0).mean() * 100,
+        "total %": pnl.sum() * 100,  # sum of log returns
+        "per trade %": traded.mean() * 100,
+        "win rate %": (traded > 0).mean() * 100,
+        # return per unit of risk, annualised; > 1 would be very good
+        "sharpe": pnl.mean() / pnl.std() * np.sqrt(periods_per_year),
+    }

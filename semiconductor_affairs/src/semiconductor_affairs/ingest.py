@@ -67,7 +67,38 @@ def merge_and_save(new: pd.DataFrame, path: Path) -> pd.DataFrame:
     return combined
 
 
+# Tickers whose earnings can move ICHR overnight (ETFs have no earnings).
+EARNINGS_TICKERS = ["ICHR", "LRCX", "AMAT", "KLAC", "ASML", "TSM", "NVDA", "UCTT"]
+
+
+def fetch_earnings(ticker: str, limit: int = 40) -> pd.DataFrame:
+    """Past and announced future earnings release times (UTC)."""
+    dates = yf.Ticker(ticker).get_earnings_dates(limit=limit)
+    return pd.DataFrame(
+        {"ticker": ticker, "timestamp": dates.index.tz_convert("UTC")}
+    )
+
+
+def save_earnings(path: Path = DATA_DIR / "earnings.parquet") -> pd.DataFrame:
+    """Merge newly fetched earnings dates into the stored file.
+
+    Dates are announced weeks ahead, so the file also contains upcoming
+    releases. Yahoo can move a date, so the newest fetch per ticker wins.
+    """
+    new = pd.concat([fetch_earnings(t) for t in EARNINGS_TICKERS])
+    if path.exists():
+        old = pd.read_parquet(path)
+        fetched_from = new.groupby("ticker")["timestamp"].min()
+        keep_old = old["timestamp"] < old["ticker"].map(fetched_from)
+        new = pd.concat([old[keep_old], new])
+    new = new.drop_duplicates().sort_values(["ticker", "timestamp"])
+    new.to_parquet(path, index=False)
+    return new
+
+
 def main() -> None:
+    earnings = save_earnings()
+    print(f"earnings dates stored: {len(earnings)}")
     for ticker in TICKERS:
         bars = fetch_hourly(ticker)
         if bars.empty:
