@@ -8,6 +8,7 @@ dependencies = [
     "pandas>=2.2",
     "pyarrow>=17.0",
     "scikit-learn>=1.9.1",
+    "torch>=2.4",
 ]
 
 [build-system]
@@ -25,3 +26,13 @@ dev = [
     "ipykernel>=6.29",
     "matplotlib>=3.9",
 ]
+
+# CPU-only torch wheel (~200 MB instead of ~2.5 GB of CUDA libraries).
+# With a GPU: delete these two blocks and `uv sync` again.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

@@ -141,10 +141,16 @@ Next-hour **log return** of ICHR, as a percentage. Variant to try later: the **e
       - Ridge shrinks to ~0 itself (alpha 5.6k–31.6k, last fold 1M): prediction std 0.07% vs actual 1.3%.
       - Regime flip again: 2025 skill +0.4% (corr 0.07), 2026 −0.5%. Big-move features don't help.
       - **Bar for the LSTM: skill > 0 on the walk-forward, in both years.**
-- [ ] **4. LSTM v1**: `nn.LSTM` on windows of ~20–40 hours of all tickers → next-hour return. Explicit training loop,
-      early stopping.
+- [x] **4. LSTM v1**: `lstm.py` (nn.LSTM, hidden 16, ~1.8k weights, explicit loop, chronological 20% validation,
+      early stopping, target scaled by train std), `notebooks/04_lstm.ipynb`. Windows 7 / 35 / 140 h × 3 seeds, scored on
+      identical hours. Results:
+      - **No window beats zero**: skill ≈ −0.3% for all (2025 +0.23%, 2026 −0.7%); ridge on the same hours −0.19%.
+      - **Window length doesn't matter**: the forget gate stays ≈ 0.5 (its initial value), so memory halves every hour
+        and the 140 h model only uses the last ~3–7 h (wiping older hours doesn't change predictions).
+      - Seed spread (−0.24…−0.51%) ≫ window differences (~0.02%), so always use several seeds.
+      - Overfitting visible: train loss falls, validation ≈ 0.99 × zero.
 - [ ] **5. LSTM internals**: write an LSTM cell from scratch, check it matches `nn.LSTM` numerically, and look at gate
-      activations on real data.
+      activations on real data. Try a forget-gate bias init of ≥1 (longer starting memory).
 - [ ] **6. Evaluate**: LSTM vs baselines on metrics from §5.7, including the toy backtest with costs.
 - [ ] **7. Iterate**: separate overnight-gap model (small data, so a simple model first), excess-return target, time-of-day / overnight features, Taiwan-close TSMC (`2330.TW`) as an
       overnight feature, European variant, daily-frequency comparison.
