@@ -164,6 +164,11 @@ Next-hour **log return** of ICHR, as a percentage. Variant to try later: the **e
         borrow fees, possible recall of the shares, and unlimited loss on a takeover-style jump. Holding a permanent
         base position (e.g. 10 units, sell 1 on "down" nights) avoids shorting but adds full buy-and-hold ICHR risk,
         including earnings nights, so rejected.
+      - **Minimum-gain threshold** (only buy if prediction > threshold, chosen each quarter from earlier quarters only):
+        worse at every level (no threshold +135%, 0.1% +94%, adaptive +107% at 2 bp/side). The LSTM's prediction
+        *size* carries little information, mainly its sign. Keep threshold 0.
+      - Wallet simulation (whole shares, compounding, $323 start = 10 shares): LSTM long or flat ~$1,200, always long
+        ~$790, buy and hold ~$355; buy and hold dipped to $140 on the way.
 - [ ] **5. LSTM internals** (deprioritised: not interested in a hand-written cell for now): write an LSTM cell from scratch, check it matches `nn.LSTM` numerically, and look at gate
       activations on real data. Try a forget-gate bias init of ≥1 (longer starting memory).
 - [ ] **6. Evaluate**: LSTM vs baselines on metrics from §5.7, including the toy backtest with costs.
